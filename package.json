@@ -1,0 +1,22 @@
+{
+  "name": "@furlpay/x402",
+  "version": "0.1.0",
+  "description": "x402 facilitator client + payment middleware (Next.js / Express) for agentic stablecoin payments — the first Solana-native x402 facilitator, also on Base.",
+  "license": "MIT",
+  "homepage": "https://github.com/FurlPay/furlpay-x402#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/FurlPay/furlpay-x402.git" },
+  "bugs": { "url": "https://github.com/FurlPay/furlpay-x402/issues" },
+  "author": "Furlpay <hello@furlpay.com>",
+  "keywords": ["x402", "agentic-payments", "http-402", "ai-agents", "stablecoin", "usdc", "solana", "base", "facilitator", "middleware", "mcp"],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": { "access": "public" },
+  "engines": { "node": ">=18" },
+  "devDependencies": { "typescript": "5.5.3", "@types/node": "20.14.10" }
+}
