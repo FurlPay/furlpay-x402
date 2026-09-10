@@ -94,8 +94,14 @@ test("withX402 gates a Next.js handler and stamps X-PAYMENT-RESPONSE", async () 
 test("useFacilitator posts verify/settle to the configured base URL", async () => {
   const calls = [];
   const fetchStub = async (url, init) => {
-    calls.push({ url, body: init ? JSON.parse(init.body) : null });
-    return { json: async () => ({ ok: true }) };
+    // A real Response, because the facilitator client reads res.ok and res.status
+    // before it reads the body. `init` is present on every call now (it carries
+    // the timeout signal), so the body is guarded rather than assumed.
+    calls.push({ url, body: init && init.body ? JSON.parse(init.body) : null });
+    return new Response(JSON.stringify({ kinds: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
   const f = useFacilitator("https://fac.example.com/x402/", fetchStub);
   await f.supported();
