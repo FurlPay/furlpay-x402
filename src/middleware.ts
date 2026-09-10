@@ -1,5 +1,11 @@
 import { DEFAULT_FACILITATOR, useFacilitator, type Facilitator } from "./facilitator";
-import type { Network, PaymentPayload, PaymentRequirements } from "./types";
+import type {
+  Network,
+  PaymentPayload,
+  PaymentRequirements,
+  SettlementEvidence,
+  SettlementStrength,
+} from "./types";
 
 // Framework-agnostic payment gate + Next.js / Express adapters. Gate a route
 // behind an x402 micropayment in a few lines; verification and on-chain
@@ -16,6 +22,21 @@ export interface PriceConfig {
   description?: string;
   facilitator?: string | Facilitator;
   maxTimeoutSeconds?: number;
+  /**
+   * Minimum settlement strength before the resource is released.
+   *
+   * Left unset, `gate()` behaves as it always has: the facilitator says
+   * `success: true` and the resource ships. That is the right default only
+   * because changing it would break every existing caller — it is NOT a safe
+   * posture, and it is why this option exists.
+   *
+   * Set it and the gate refuses to release against a settlement the facilitator
+   * has not claimed is strong enough. `"confirmed"` stops a release against a
+   * transaction that is merely broadcast; `"finalized"` stops a release against
+   * one a re-org could still undo, which is what the amount at risk should
+   * decide. @furlpay/settlement maps an amount to that requirement.
+   */
+  requireSettlement?: SettlementStrength;
 }
 
 const USDC = {
@@ -43,10 +64,33 @@ function resolveFacilitator(f: PriceConfig["facilitator"]): Facilitator {
   return typeof f === "string" ? useFacilitator(f) : f;
 }
 
+/** Ascending strength. Compared, never assumed. */
+const STRENGTH_RANK: Record<SettlementStrength, number> = {
+  unknown: 0,
+  submitted: 1,
+  confirmed: 2,
+  finalized: 3,
+};
+
+/**
+ * Does the evidence clear the bar?
+ *
+ * Absent evidence is `unknown`, which clears only an `unknown` requirement.
+ * Nothing here infers strength from `success` — that inference is precisely the
+ * bug this gate exists to prevent.
+ */
+function meetsStrength(
+  evidence: SettlementEvidence | undefined,
+  required: SettlementStrength
+): boolean {
+  const observed: SettlementStrength = evidence?.strength ?? "unknown";
+  return STRENGTH_RANK[observed] >= STRENGTH_RANK[required];
+}
+
 export type GateResult =
   | { paid: false; status: 402; body: { x402Version: number; error: string; accepts: PaymentRequirements[] } }
   | { paid: false; status: 400; body: { error: string } }
-  | { paid: true; payer: string; transaction: string; settlementHeader: string };
+  | { paid: true; payer: string; transaction: string; settlementHeader: string; settlement?: SettlementEvidence };
 
 /**
  * Core gate: given the resource URL and the incoming X-PAYMENT header, returns
@@ -80,8 +124,35 @@ export async function gate(resource: string, xPaymentHeader: string | null, cfg:
     };
   }
 
+  // The requirement is checked AFTER settlement succeeded and BEFORE anything is
+  // released. A settlement that landed but is not yet strong enough is not an
+  // error — it is a 402 the payer can clear by waiting, so the challenge is
+  // returned rather than a failure.
+  if (cfg.requireSettlement && !meetsStrength(settlement.settlement, cfg.requireSettlement)) {
+    return {
+      paid: false,
+      status: 402,
+      body: {
+        x402Version: X402_VERSION,
+        error: `settlement_strength_insufficient: required ${cfg.requireSettlement}, observed ${
+          settlement.settlement?.strength ?? "unknown"
+        }`,
+        accepts: [requirements],
+      },
+    };
+  }
+
   const settlementHeader = Buffer.from(JSON.stringify(settlement)).toString("base64");
-  return { paid: true, payer: settlement.payer!, transaction: settlement.transaction!, settlementHeader };
+  // `transaction` is guaranteed non-empty by the facilitator client, which
+  // refuses a success that does not name one. The non-null assertions that used
+  // to sit here were asserting over unvalidated remote data.
+  return {
+    paid: true,
+    payer: settlement.payer ?? "",
+    transaction: settlement.transaction ?? "",
+    settlementHeader,
+    settlement: settlement.settlement,
+  };
 }
 
 /**
