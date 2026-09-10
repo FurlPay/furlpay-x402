@@ -110,7 +110,37 @@ const receipt = await facilitator.settle(payload, requirements);
 
 ## Security notes
 
-The hardened server-side verifier used by the hosted facilitator defends the four published x402 attack classes: authorization (server-side truth for every field), binding (HMAC over resource + method + amount + expiry), replay (single-use nonces and quote ids), and web-layer handling (size-capped, fail-closed header parsing). See the [Furlpay security write-up](https://furlpay.com/blog/five-ways-to-rob-an-ai-agent-securing-x402) for details.
+**The defenses below live in the facilitator, not in this package.** `gate()` is a
+client: it builds the challenge, forwards the payment to whichever facilitator you
+point it at, and releases the resource when that facilitator reports success. It
+performs no binding check, keeps no nonce store, and applies no confirmation-depth
+policy of its own.
+
+That distinction only matters if you change the facilitator — and the `facilitator`
+option exists precisely so you can. Against the hosted Furlpay facilitator you get
+the hardened verifier described below. Against your own deployment, or any third
+party, you get exactly what that facilitator enforces and nothing more.
+
+The hardened server-side verifier used by the hosted facilitator defends the four
+published x402 attack classes: authorization (server-side truth for every field),
+binding (HMAC over resource + method + amount + expiry), replay (single-use nonces
+and quote ids), and web-layer handling (size-capped, fail-closed header parsing).
+See the [Furlpay security write-up](https://furlpay.com/blog/five-ways-to-rob-an-ai-agent-securing-x402)
+for details.
+
+### Self-hosting or using another facilitator
+
+Add the defenses at your own edge:
+
+- [`@furlpay/x402-guard`](https://github.com/FurlPay/x402-guard) — request binding (F1),
+  atomic nonce linearization (F2), reserve-commit allowances (F3) and settlement
+  capacity limits (F4), all failure-closed.
+- [`@furlpay/settlement`](https://github.com/FurlPay/furlpay-settlement) — `assessSettlement`
+  decides whether an observed on-chain state is strong enough to release, given the
+  amount at risk. A `SettleResponse` reporting `success` says a transaction exists; it
+  does not say the transaction is irreversible.
+
+Neither is a dependency of this package, so neither is applied unless you wire it in.
 
 ## Testing
 
