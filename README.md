@@ -1,5 +1,12 @@
 # @furlpay/x402
 
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)
+![Solana](https://img.shields.io/badge/Solana-9945FF?style=flat-square&logo=solana&logoColor=white)
+![x402](https://img.shields.io/badge/x402-0052FF?style=flat-square)
+![USDC](https://img.shields.io/badge/USDC-2775CA?style=flat-square)
+
 [![npm](https://img.shields.io/npm/v/%40furlpay%2Fx402)](https://www.npmjs.com/package/@furlpay/x402)
 [![CI](https://github.com/FurlPay/furlpay-x402/actions/workflows/ci.yml/badge.svg)](https://github.com/FurlPay/furlpay-x402/actions)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
