@@ -7,7 +7,6 @@
 ![x402](https://img.shields.io/badge/x402-0052FF?style=flat-square)
 ![USDC](https://img.shields.io/badge/USDC-2775CA?style=flat-square)
 
-[![CI](https://github.com/FurlPay/furlpay-x402/actions/workflows/ci.yml/badge.svg)](https://github.com/FurlPay/furlpay-x402/actions)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 x402 payment middleware and facilitator client — gate any HTTP route behind a stablecoin micropayment in a few lines. Built on the [x402 protocol](https://www.x402.org/) (HTTP 402 "Payment Required" revived for machine-to-machine payments), with the first Solana-native facilitator alongside Base support.
