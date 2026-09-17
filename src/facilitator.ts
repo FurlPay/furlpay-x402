@@ -8,8 +8,19 @@ import type {
   VerifyResponse,
 } from "./types";
 
-// The hosted Furlpay facilitator — the first Solana-native x402 facilitator,
-// also supporting Base. Point at your own deployment to self-host.
+// The hosted Furlpay facilitator. Point at your own deployment to self-host.
+//
+// WHAT IT CAN SETTLE, precisely, because this used to overclaim. The hosted
+// facilitator verifies EIP-3009 authorizations by EIP-712 ecrecover (plus
+// ERC-1271 for contract wallets) and settles them on EVM networks — Arbitrum
+// and Base today. It does NOT verify Solana: SVM uses a different signature
+// scheme, and the verifier returns `svm_verification_unavailable` rather than
+// accepting something it has not checked.
+//
+// The MIDDLEWARE in this package is a separate matter and is chain-agnostic:
+// buildRequirements() will happily emit a Solana 402 with the right USDC mint.
+// Emitting a requirement and settling a payment are different capabilities, and
+// conflating them is what the old comment here did.
 export const DEFAULT_FACILITATOR = "https://furlpay.com/api/x402/facilitator";
 
 export interface Facilitator {

@@ -1,7 +1,7 @@
 {
   "name": "@furlpay/x402",
   "version": "0.1.0",
-  "description": "x402 facilitator client + payment middleware (Next.js / Express) for agentic stablecoin payments — the first Solana-native x402 facilitator, also on Base.",
+  "description": "x402 payment middleware + facilitator client (Next.js / Express) for agentic stablecoin payments. Chain-agnostic 402s; EVM settlement via the hosted Furlpay facilitator. Zero dependencies.",
   "license": "MIT",
   "homepage": "https://github.com/FurlPay/furlpay-x402#readme",
   "repository": { "type": "git", "url": "git+https://github.com/FurlPay/furlpay-x402.git" },

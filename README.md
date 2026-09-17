@@ -3,17 +3,39 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-000000?style=flat-square&logo=nextdotjs&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)
+![Base](https://img.shields.io/badge/Base-0052FF?style=flat-square&logo=coinbase&logoColor=white)
+![Arbitrum](https://img.shields.io/badge/Arbitrum-213147?style=flat-square&logo=arbitrum&logoColor=white)
 ![Solana](https://img.shields.io/badge/Solana-9945FF?style=flat-square&logo=solana&logoColor=white)
 ![x402](https://img.shields.io/badge/x402-0052FF?style=flat-square)
 ![USDC](https://img.shields.io/badge/USDC-2775CA?style=flat-square)
 
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
-x402 payment middleware and facilitator client — gate any HTTP route behind a stablecoin micropayment in a few lines. Built on the [x402 protocol](https://www.x402.org/) (HTTP 402 "Payment Required" revived for machine-to-machine payments), with the first Solana-native facilitator alongside Base support.
+x402 payment middleware and facilitator client — gate any HTTP route behind a stablecoin micropayment in a few lines. Built on the [x402 protocol](https://www.x402.org/) (HTTP 402 "Payment Required" revived for machine-to-machine payments).
 
 - Framework adapters for Next.js App Router and Express/Connect, plus a framework-agnostic core.
 - Verification and on-chain settlement are delegated to a facilitator — the hosted Furlpay facilitator by default, or point at your own.
 - USDC on Base and Solana resolved automatically; any SPL/ERC-20 asset via config.
+
+### What settles, and what merely quotes
+
+These are different capabilities and this README used to blur them:
+
+| | Base | Arbitrum | Solana |
+| --- | --- | --- | --- |
+| Middleware can emit a 402 | yes | yes | yes |
+| Hosted facilitator verifies + settles | yes | yes | **no** |
+
+The middleware is chain-agnostic — `buildRequirements()` resolves the right USDC
+asset and returns a well-formed 402 for any network you configure. Settlement is
+delegated to a facilitator, and the hosted Furlpay facilitator verifies EIP-3009
+authorizations by EIP-712 `ecrecover` (plus ERC-1271 for contract wallets). That
+is an EVM mechanism. Solana uses a different signature scheme, so the verifier
+returns `svm_verification_unavailable` rather than accepting something it has not
+checked — it fails closed, but it does fail.
+
+So: point the middleware at Solana if you are running a facilitator that can
+settle SVM. If you are using the hosted default, use an EVM network.
 - Zero runtime dependencies. Node 18+. TypeScript types included.
 
 ## Why x402
