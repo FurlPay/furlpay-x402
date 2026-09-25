@@ -44,6 +44,16 @@ AI agents, scripts, and API clients cannot fill out card checkout forms. x402 le
 
 ## Installation
 
+> **Not yet on npm.** `@furlpay/x402` is unpublished — `npm install @furlpay/x402`
+> currently returns 404. Until a release is cut, install from the repository:
+>
+> ```bash
+> npm install github:FurlPay/furlpay-x402
+> ```
+>
+> The command below is what will work once the package is published, and the
+> examples in this README are written against it.
+
 ```bash
 npm install @furlpay/x402
 ```
