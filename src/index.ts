@@ -16,3 +16,9 @@ export {
   type VerificationFailure,
   type VerifyLocalOptions,
 } from "./verify";
+export { issueQuote, verifyQuote, type QuoteVerification } from "./binding";
+export {
+  MemoryClaimStore,
+  claimKey,
+  type PaymentClaimStore,
+} from "./claims";
