@@ -1,4 +1,5 @@
 import { DEFAULT_FACILITATOR, useFacilitator, type Facilitator } from "./facilitator";
+import { verifyLocally } from "./verify";
 import type {
   Network,
   PaymentPayload,
@@ -37,7 +38,35 @@ export interface PriceConfig {
    * decide. @furlpay/settlement maps an amount to that requirement.
    */
   requireSettlement?: SettlementStrength;
+  /**
+   * Skip the local field checks and let the facilitator decide alone.
+   *
+   * Exists as an escape hatch for a scheme whose payload this package cannot
+   * interpret, not as a tuning knob — leaving it unset is the safe posture, and
+   * setting it restores the behaviour where any facilitator weakness is a full
+   * bypass. Named for what it does rather than something reassuring, so it is
+   * hard to enable without noticing.
+   */
+  skipLocalVerification?: boolean;
 }
+
+/**
+ * Headers that keep a paid response out of a shared cache.
+ *
+ * A gated route behind a CDN or reverse proxy will otherwise have its PAID
+ * response cached and replayed to later UNPAID clients — one payment, unlimited
+ * grants, and nothing in the payment layer involved. `private` bars shared
+ * caches; `no-store` bars writing it down at all; `Vary: X-PAYMENT` stops a
+ * cache that ignores the first two from keying paid and unpaid requests to one
+ * entry.
+ *
+ * Applied to the 402 as well as the 200. A cached challenge is a cached quote,
+ * and every payer served it would be answering the same one.
+ */
+export const NO_STORE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  "Cache-Control": "no-store, private",
+  Vary: "X-PAYMENT",
+});
 
 const USDC = {
   base: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -114,6 +143,32 @@ export async function gate(resource: string, xPaymentHeader: string | null, cfg:
     return { paid: false, status: 400, body: { error: "X-PAYMENT is not valid base64 JSON" } };
   }
 
+  // LOCAL CHECKS BEFORE THE FACILITATOR SEES IT.
+  //
+  // `cfg.facilitator` is a documented option, so "the hosted one" and "any third
+  // party" are the same code path — and delegating the whole decision made that
+  // party the entire security boundary. These checks cost nothing and hold even
+  // when the facilitator is wrong, misconfigured or hostile.
+  //
+  // Running them first also means a payment that does not match what we asked
+  // for is never submitted for settlement at all. Settling first and refusing
+  // afterwards would move money on-chain for a resource we then decline to
+  // release, which is a worse failure than a 402.
+  if (!cfg.skipLocalVerification) {
+    const local = verifyLocally(payload, requirements);
+    if (!local.ok) {
+      return {
+        paid: false,
+        status: 402,
+        body: {
+          x402Version: X402_VERSION,
+          error: `${local.reason}: ${local.detail ?? ""}`.trim(),
+          accepts: [requirements],
+        },
+      };
+    }
+  }
+
   const facilitator = resolveFacilitator(cfg.facilitator);
   const settlement = await facilitator.settle(payload, requirements);
   if (!settlement.success) {
@@ -171,10 +226,14 @@ export function withX402(
   return async (req: Request) => {
     const result = await gate(req.url, req.headers.get("x-payment"), cfg);
     if (!result.paid) {
-      return Response.json(result.body, { status: result.status });
+      return Response.json(result.body, { status: result.status, headers: NO_STORE_HEADERS });
     }
     const res = await handler(req);
     res.headers.set("X-PAYMENT-RESPONSE", result.settlementHeader);
+    // Set, not appended: a handler that already chose a caching policy chose it
+    // without knowing the response was paid for, and a cacheable paid response
+    // is served to the next unpaid caller.
+    for (const [k, v] of Object.entries(NO_STORE_HEADERS)) res.headers.set(k, v);
     return res;
   };
 }
@@ -194,6 +253,9 @@ export function expressX402(cfg: PriceConfig) {
     const header = req.headers["x-payment"];
     const xPayment = Array.isArray(header) ? header[0] : header ?? null;
     const result = await gate(req.originalUrl ?? req.url, xPayment, cfg);
+    // Stamped before the branch: the challenge must be uncacheable too, and
+    // setting it in both arms separately is how one of them drifts.
+    for (const [k, v] of Object.entries(NO_STORE_HEADERS)) res.setHeader(k, v);
     if (!result.paid) {
       res.status(result.status).json(result.body);
       return;
