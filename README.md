@@ -164,14 +164,57 @@ Paid responses and 402 challenges are both stamped `Cache-Control: no-store,
 private` and `Vary: X-PAYMENT`, so a CDN or reverse proxy cannot serve a paid
 response to a later unpaid client.
 
+### Resource binding — one payment, one resource
+
+Field checks cannot stop cross-resource substitution: a payment for `/a` and a
+payment for `/b` at the same price on the same server differ in **no field the
+authorization carries**. The `exact` scheme simply does not name a resource.
+
+Set `bindingSecret` and the 402 carries a signed quote the payer echoes back in
+`extra.quote`:
+
+```ts
+withX402(handler, {
+  payTo: "0x...",
+  amount: "10000",
+  bindingSecret: process.env.X402_BINDING_SECRET, // server-held, never shipped
+});
+```
+
+The quote is HMAC'd over the resource, price, recipient and network, so a payer
+can return one but cannot mint one for a different route — and a quote stops
+verifying the moment any of those terms change.
+
+Opt-in because it is a protocol change for payers, not because it is optional in
+any security sense.
+
+### Replay — one payment, one grant
+
+`gate()` claims each payment before settling, so a replayed `X-PAYMENT` header
+is refused rather than releasing the resource again. The release rule is the
+part that matters:
+
+| Settlement outcome | Claim |
+| --- | --- |
+| success | kept — the payment is spent |
+| definite failure | **released** — no money moved, so the payer can retry |
+| not yet deep enough | **released** — that 402 invites a retry |
+| threw / timed out | **kept** — unknown is not "did not happen" |
+
+The default store is in-memory and therefore **single-instance only**: its
+atomicity comes from Node being single-threaded, which is worth nothing across
+two workers. Behind a load balancer each instance keeps its own set and a
+payment replays once per instance — inject a shared store (Redis `SET NX`) via
+`claimStore`, or set `singleUse: false` to leave replay entirely to the
+facilitator.
+
 ### What still lives in the facilitator
 
-Local checks are field checks. They are **not** a signature check, and **not** a
-resource binding — the `exact` scheme's authorization carries no resource, so a
-payment minted for resource A still satisfies every field of resource B on the
-same server at the same price. Closing that needs a binding the payer signs
-over (F1 in `@furlpay/x402-guard`), a nonce store for replay, and a
-confirmation-depth policy. `gate()` keeps no nonce store of its own.
+Local checks are field checks, not a **signature** check — verifying the
+authorization's signature needs the chain's curve and is the facilitator's job.
+Settlement finality is governed by `requireSettlement` (see
+`SettlementStrength`), which refuses to release against a transaction the
+facilitator has not claimed is strong enough.
 
 That distinction only matters if you change the facilitator — and the `facilitator`
 option exists precisely so you can. Against the hosted Furlpay facilitator you get

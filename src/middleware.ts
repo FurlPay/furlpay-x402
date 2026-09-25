@@ -1,5 +1,7 @@
 import { DEFAULT_FACILITATOR, useFacilitator, type Facilitator } from "./facilitator";
 import { verifyLocally } from "./verify";
+import { issueQuote, verifyQuote } from "./binding";
+import { MemoryClaimStore, claimKey, type PaymentClaimStore } from "./claims";
 import type {
   Network,
   PaymentPayload,
@@ -48,6 +50,49 @@ export interface PriceConfig {
    * hard to enable without noticing.
    */
   skipLocalVerification?: boolean;
+  /**
+   * Server-held secret that binds a payment to THIS resource.
+   *
+   * Set it and the 402 carries a signed quote the payer must echo back; the
+   * gate then refuses any payment whose quote was issued for a different
+   * resource, price or recipient. Without it there is no binding at all and two
+   * routes at the same price on the same server accept each other's payments —
+   * the `exact` scheme's authorization simply does not name a resource.
+   *
+   * Left unset the gate behaves as before, because turning binding on is a
+   * protocol change for payers: they have to echo `extra.quote`. It is opt-in
+   * for that reason, not because it is optional in any security sense.
+   */
+  bindingSecret?: string;
+  /**
+   * Single-use claim store, so one payment releases one resource.
+   *
+   * Defaults to a per-config in-memory store, which is correct in ONE process
+   * and useless across a fleet — behind a load balancer each instance keeps its
+   * own set and a payment replays once per instance. Inject a shared store for
+   * anything running more than one copy.
+   */
+  claimStore?: PaymentClaimStore;
+  /** Set false to disable claiming entirely. Replay then rests on the facilitator. */
+  singleUse?: boolean;
+}
+
+/**
+ * Default claim stores, one per distinct config object.
+ *
+ * Keyed by the config so two routes cannot collide in one another's claim
+ * space, and weak so a config that goes out of scope does not pin its store.
+ */
+const DEFAULT_CLAIM_STORES = new WeakMap<PriceConfig, PaymentClaimStore>();
+
+function resolveClaimStore(cfg: PriceConfig): PaymentClaimStore {
+  if (cfg.claimStore) return cfg.claimStore;
+  let store = DEFAULT_CLAIM_STORES.get(cfg);
+  if (!store) {
+    store = new MemoryClaimStore();
+    DEFAULT_CLAIM_STORES.set(cfg, store);
+  }
+  return store;
 }
 
 /**
@@ -129,10 +174,22 @@ export async function gate(resource: string, xPaymentHeader: string | null, cfg:
   const requirements = buildRequirements(resource, cfg);
 
   if (!xPaymentHeader) {
+    // The challenge carries a fresh quote when binding is on. Minted per
+    // challenge rather than per route so two payers never share one, which is
+    // what makes the single-use claim below meaningful.
+    const challenge = cfg.bindingSecret
+      ? {
+          ...requirements,
+          extra: {
+            ...requirements.extra,
+            quote: issueQuote(requirements, cfg.bindingSecret, requirements.maxTimeoutSeconds),
+          },
+        }
+      : requirements;
     return {
       paid: false,
       status: 402,
-      body: { x402Version: X402_VERSION, error: "X-PAYMENT required", accepts: [requirements] },
+      body: { x402Version: X402_VERSION, error: "X-PAYMENT required", accepts: [challenge] },
     };
   }
 
@@ -169,9 +226,74 @@ export async function gate(resource: string, xPaymentHeader: string | null, cfg:
     }
   }
 
+  // RESOURCE BINDING. Field checks cannot catch cross-resource substitution,
+  // because every field of a payment for another resource at the same price
+  // genuinely matches. The quote is the only thing that names the resource.
+  let quoteId: string | undefined;
+  if (cfg.bindingSecret) {
+    const q = verifyQuote(payload.extra?.quote, requirements, cfg.bindingSecret);
+    if (!q.ok) {
+      return {
+        paid: false,
+        status: 402,
+        body: {
+          x402Version: X402_VERSION,
+          error: `${q.reason}: ${q.detail ?? ""}`.trim(),
+          accepts: [requirements],
+        },
+      };
+    }
+    quoteId = q.quoteId;
+  }
+
+  // SINGLE USE. Claimed before settlement so two concurrent copies of one
+  // payment cannot both reach the settler.
+  const singleUse = cfg.singleUse !== false;
+  const store = singleUse ? resolveClaimStore(cfg) : null;
+  const key = claimKey(
+    String(requirements.network),
+    payload.payload?.authorization?.nonce ?? "",
+    quoteId
+  );
+  if (store) {
+    const won = await store.claim(key);
+    if (!won) {
+      return {
+        paid: false,
+        status: 402,
+        body: {
+          x402Version: X402_VERSION,
+          error: "payment_already_used: this authorization has already released the resource",
+          accepts: [requirements],
+        },
+      };
+    }
+  }
+
   const facilitator = resolveFacilitator(cfg.facilitator);
-  const settlement = await facilitator.settle(payload, requirements);
+  let settlement: Awaited<ReturnType<Facilitator["settle"]>>;
+  try {
+    settlement = await facilitator.settle(payload, requirements);
+  } catch (err) {
+    // UNKNOWN, NOT FAILED. The settler may well have landed the transaction and
+    // failed on the way back, so the claim is NOT released — releasing here
+    // re-opens replay for the payment most likely to have actually settled.
+    return {
+      paid: false,
+      status: 402,
+      body: {
+        x402Version: X402_VERSION,
+        error: `settlement_unknown: ${(err as Error).message}`,
+        accepts: [requirements],
+      },
+    };
+  }
+
   if (!settlement.success) {
+    // A definite no: no money moved, so the payer keeps their authorization and
+    // can retry after fixing whatever the facilitator objected to. Holding the
+    // claim here would lock someone out of their own unspent payment.
+    if (store) await store.release(key);
     return {
       paid: false,
       status: 402,
@@ -184,6 +306,12 @@ export async function gate(resource: string, xPaymentHeader: string | null, cfg:
   // error — it is a 402 the payer can clear by waiting, so the challenge is
   // returned rather than a failure.
   if (cfg.requireSettlement && !meetsStrength(settlement.settlement, cfg.requireSettlement)) {
+    // RELEASED, because this 402 is an invitation to retry the SAME payment
+    // once it is deeper. Holding the claim would make "wait and try again" the
+    // one thing the payer cannot do. Releasing is safe here precisely because
+    // nothing was released to them: a concurrent duplicate re-claiming only
+    // reaches this same check and is refused the same way.
+    if (store) await store.release(key);
     return {
       paid: false,
       status: 402,
