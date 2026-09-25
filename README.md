@@ -137,16 +137,46 @@ const receipt = await facilitator.settle(payload, requirements);
 
 ## Security notes
 
-**The defenses below live in the facilitator, not in this package.** `gate()` is a
-client: it builds the challenge, forwards the payment to whichever facilitator you
-point it at, and releases the resource when that facilitator reports success. It
-performs no binding check, keeps no nonce store, and applies no confirmation-depth
-policy of its own.
+### What this package checks itself
+
+`gate()` verifies the presented payload against the requirements **it** built,
+before forwarding anything to a facilitator:
+
+| Checked locally | Refused when |
+| --- | --- |
+| `payTo` | the authorization is addressed to someone else |
+| amount | `authorization.value < maxAmountRequired` (overpayment is fine) |
+| `scheme` / `network` / `x402Version` | they differ from the challenge |
+| validity window | expired, or not yet valid beyond a 5s skew allowance |
+| shape | no signature, or no authorization object |
+
+These hold even when the facilitator is wrong, misconfigured or hostile — which
+matters because `facilitator` is a documented option, so "the hosted one" and
+"any third party" are the same code path. A payment that fails them is **never
+submitted for settlement**, so a mismatched payment does not move money on-chain
+for a resource that is then refused.
+
+`skipLocalVerification: true` restores the old delegate-everything behaviour for
+a scheme this package cannot interpret. It is an escape hatch, not a tuning
+knob: setting it makes any facilitator weakness a full bypass again.
+
+Paid responses and 402 challenges are both stamped `Cache-Control: no-store,
+private` and `Vary: X-PAYMENT`, so a CDN or reverse proxy cannot serve a paid
+response to a later unpaid client.
+
+### What still lives in the facilitator
+
+Local checks are field checks. They are **not** a signature check, and **not** a
+resource binding — the `exact` scheme's authorization carries no resource, so a
+payment minted for resource A still satisfies every field of resource B on the
+same server at the same price. Closing that needs a binding the payer signs
+over (F1 in `@furlpay/x402-guard`), a nonce store for replay, and a
+confirmation-depth policy. `gate()` keeps no nonce store of its own.
 
 That distinction only matters if you change the facilitator — and the `facilitator`
 option exists precisely so you can. Against the hosted Furlpay facilitator you get
 the hardened verifier described below. Against your own deployment, or any third
-party, you get exactly what that facilitator enforces and nothing more.
+party, you get exactly what that facilitator enforces, plus the local checks above.
 
 The hardened server-side verifier used by the hosted facilitator defends the four
 published x402 attack classes: authorization (server-side truth for every field),

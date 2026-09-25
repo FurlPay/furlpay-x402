@@ -14,8 +14,29 @@ const { gate, useFacilitator } = require("../dist/index.js");
 // ---------------------------------------------------------------------------
 
 const CFG = { payTo: "0x1111111111111111111111111111111111111111", amount: "10000" };
+
+// A payment that satisfies `gate()`'s local checks, so this file keeps testing
+// the SETTLEMENT-STRENGTH boundary rather than stopping at field validation.
+// It was `payload: {}` before those checks existed; with them, the sweep below
+// would never reach a release and its own anti-vacuity guard catches that.
+const NOW = Math.floor(Date.now() / 1000);
 const HEADER = Buffer.from(
-  JSON.stringify({ x402Version: 1, scheme: "exact", network: "base", payload: {} })
+  JSON.stringify({
+    x402Version: 1,
+    scheme: "exact",
+    network: "base",
+    payload: {
+      signature: "0xsignature",
+      authorization: {
+        from: "0x2222222222222222222222222222222222222222",
+        to: CFG.payTo,
+        value: CFG.amount,
+        validAfter: String(NOW - 60),
+        validBefore: String(NOW + 600),
+        nonce: "0xnonce",
+      },
+    },
+  })
 ).toString("base64");
 
 /** A fetch that answers every call with one status and one body. */

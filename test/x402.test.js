@@ -52,9 +52,40 @@ function encodePayload(payload) {
   return Buffer.from(JSON.stringify(payload)).toString("base64");
 }
 
+/**
+ * A payment that actually matches CFG.
+ *
+ * These fixtures used to be `{ x402Version: 1 }` — no scheme, no network, no
+ * authorization. They exercised the settle path only because `gate()` checked
+ * nothing locally and forwarded whatever arrived; no real facilitator could
+ * have settled them either. Now that `gate()` verifies the payload against the
+ * requirements it built, a fixture has to be a payment rather than a placeholder.
+ */
+function validPayload(over = {}, authOver = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    x402Version: 1,
+    scheme: "exact",
+    network: "base",
+    payload: {
+      signature: "0xsignature",
+      authorization: {
+        from: "0x2222222222222222222222222222222222222222",
+        to: CFG.payTo,
+        value: CFG.amount,
+        validAfter: String(now - 60),
+        validBefore: String(now + 600),
+        nonce: "0xnonce",
+        ...authOver,
+      },
+    },
+    ...over,
+  };
+}
+
 test("gate settles a valid payment and round-trips the settlement header", async () => {
   const settlement = { success: true, payer: "0xPAYER", transaction: "0xTX", network: "base" };
-  const header = encodePayload({ x402Version: 1, scheme: "exact", network: "base", payload: {} });
+  const header = encodePayload(validPayload());
   const result = await gate("https://x/premium", header, { ...CFG, facilitator: stubFacilitator(settlement) });
   assert.strictEqual(result.paid, true);
   assert.strictEqual(result.payer, "0xPAYER");
@@ -64,7 +95,7 @@ test("gate settles a valid payment and round-trips the settlement header", async
 });
 
 test("gate surfaces facilitator failure as a fresh 402 with the error reason", async () => {
-  const header = encodePayload({ x402Version: 1 });
+  const header = encodePayload(validPayload());
   const result = await gate("https://x/premium", header, {
     ...CFG,
     facilitator: stubFacilitator({ success: false, errorReason: "insufficient_funds" }),
@@ -85,7 +116,7 @@ test("withX402 gates a Next.js handler and stamps X-PAYMENT-RESPONSE", async () 
   assert.strictEqual(challenge.status, 402);
 
   const paid = await handler(
-    new Request("https://x/premium", { headers: { "x-payment": encodePayload({ x402Version: 1 }) } })
+    new Request("https://x/premium", { headers: { "x-payment": encodePayload(validPayload()) } })
   );
   assert.strictEqual(paid.status, 200);
   assert.ok(paid.headers.get("X-PAYMENT-RESPONSE"));
