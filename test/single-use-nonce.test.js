@@ -327,3 +327,51 @@ test("two instances sharing one store: one authorization settles once across the
   const [held] = [...store.keys.values()];
   assert.ok(held >= (now() + 600) * 1000, "the store was told to hold the claim past validBefore");
 });
+
+// ── failure of the store itself ────────────────────────────────────────────
+
+test("a claim store that throws fails closed: nothing settles, nothing is granted", async () => {
+  const f = settler();
+  const broken = { claim: async () => { throw new Error("redis down"); }, release: async () => {} };
+  const cfg = { ...BOUND, facilitator: f, claimStore: broken };
+  await assert.rejects(present(cfg, payment({ quote: await quote(cfg) })), /redis down/);
+  assert.strictEqual(f.calls.length, 0);
+});
+
+test("a release that throws after a decline still grants nothing", async () => {
+  const f = settler(() => ({ success: false, errorReason: "declined" }));
+  const store = new MemoryClaimStore();
+  const cfg = { ...UNBOUND, facilitator: f, claimStore: { claim: (k, h) => store.claim(k, h), release: async () => { throw new Error("redis down"); } } };
+  await assert.rejects(present(cfg, payment()), /redis down/);
+  assert.strictEqual(f.calls.length, 1);
+});
+
+// ── property: grants never exceed distinct authorizations ──────────────────
+
+/** Deterministic PRNG so a failing seed can be replayed. */
+function prng(seed) {
+  let s = seed >>> 0;
+  return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+}
+
+test("property: under random concurrent replays, spellings and quotes, each nonce settles at most once", async () => {
+  for (let seed = 1; seed <= 25; seed++) {
+    const rand = prng(seed);
+    const f = settler((n) => (rand() < 0.2 ? { success: false, errorReason: "declined" } : { success: true, transaction: "0xtx" + n }));
+    const cfg = { ...(rand() < 0.5 ? BOUND : UNBOUND), facilitator: f, claimStore: sharedStore() };
+    const hexes = Array.from({ length: 1 + Math.floor(rand() * 4) }, () => crypto.randomBytes(32).toString("hex"));
+    const spell = (h) => [`0x${h}`, `0x${h.toUpperCase()}`, h, `0X${h}`][Math.floor(rand() * 4)];
+    const attempts = [];
+    for (let i = 0; i < 12; i++) {
+      const h = hexes[Math.floor(rand() * hexes.length)];
+      const q = cfg.bindingSecret ? await quote(cfg) : undefined;
+      attempts.push(present(cfg, payment({ nonce: spell(h), quote: q })).then((r) => ({ h, r })));
+    }
+    const results = await Promise.all(attempts);
+    for (const h of hexes) {
+      const grants = results.filter((x) => x.h === h && x.r.paid).length;
+      assert.ok(grants <= 1, `seed ${seed}: nonce granted ${grants} times`);
+    }
+    assert.ok(results.filter((x) => x.r.paid).length <= hexes.length, `seed ${seed}`);
+  }
+});
