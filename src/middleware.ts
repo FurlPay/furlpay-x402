@@ -1,7 +1,7 @@
 import { DEFAULT_FACILITATOR, useFacilitator, type Facilitator } from "./facilitator";
 import { verifyLocally } from "./verify";
 import { issueQuote, verifyQuote } from "./binding";
-import { MemoryClaimStore, claimKey, type PaymentClaimStore } from "./claims";
+import { MemoryClaimStore, canonicalNonce, claimKey, type PaymentClaimStore } from "./claims";
 import type {
   Network,
   PaymentPayload,
@@ -161,6 +161,34 @@ function meetsStrength(
   return STRENGTH_RANK[observed] >= STRENGTH_RANK[required];
 }
 
+/**
+ * How long past `validBefore` a claim is held. Covers clock skew between this
+ * server and the chain, so a claim never lapses while the token contract would
+ * still accept the authorization.
+ */
+const CLAIM_EXPIRY_MARGIN_MS = 10 * 60_000;
+
+type PaymentIdentity = { ok: true; nonce: string; holdUntilMs: number } | { ok: false; detail: string };
+
+/**
+ * The replay identity of a payment and how long it must stay claimed.
+ *
+ * Runs whenever single use is on, including with `skipLocalVerification`: a
+ * claim needs a real nonce and a real expiry whatever else is skipped. A
+ * payment without `validBefore` is refused because a claim with no end date
+ * would have to lapse on the store's TTL while the authorization lived on.
+ */
+function paymentIdentity(network: string, payload: PaymentPayload): PaymentIdentity {
+  const auth = payload?.payload?.authorization;
+  const nonce = canonicalNonce(network, auth?.nonce);
+  if (!nonce.ok) return nonce;
+  const validBefore = Number(auth?.validBefore);
+  if (!Number.isSafeInteger(validBefore) || validBefore <= 0) {
+    return { ok: false, detail: "authorization.validBefore is missing or not a unix time" };
+  }
+  return { ok: true, nonce: nonce.nonce, holdUntilMs: validBefore * 1000 + CLAIM_EXPIRY_MARGIN_MS };
+}
+
 export type GateResult =
   | { paid: false; status: 402; body: { x402Version: number; error: string; accepts: PaymentRequirements[] } }
   | { paid: false; status: 400; body: { error: string } }
@@ -229,7 +257,6 @@ export async function gate(resource: string, xPaymentHeader: string | null, cfg:
   // RESOURCE BINDING. Field checks cannot catch cross-resource substitution,
   // because every field of a payment for another resource at the same price
   // genuinely matches. The quote is the only thing that names the resource.
-  let quoteId: string | undefined;
   if (cfg.bindingSecret) {
     const q = verifyQuote(payload.extra?.quote, requirements, cfg.bindingSecret);
     if (!q.ok) {
@@ -243,20 +270,30 @@ export async function gate(resource: string, xPaymentHeader: string | null, cfg:
         },
       };
     }
-    quoteId = q.quoteId;
   }
 
   // SINGLE USE. Claimed before settlement so two concurrent copies of one
-  // payment cannot both reach the settler.
+  // payment cannot both reach the settler, and claimed on the on-chain nonce
+  // whether or not binding is on (see claimKey). The quote is a restriction
+  // checked above, never the replay identity.
   const singleUse = cfg.singleUse !== false;
   const store = singleUse ? resolveClaimStore(cfg) : null;
-  const key = claimKey(
-    String(requirements.network),
-    payload.payload?.authorization?.nonce ?? "",
-    quoteId
-  );
+  let key = "";
   if (store) {
-    const won = await store.claim(key);
+    const identity = paymentIdentity(String(requirements.network), payload);
+    if (!identity.ok) {
+      return {
+        paid: false,
+        status: 402,
+        body: {
+          x402Version: X402_VERSION,
+          error: `malformed_payload: ${identity.detail}`,
+          accepts: [requirements],
+        },
+      };
+    }
+    key = claimKey(String(requirements.network), identity.nonce);
+    const won = await store.claim(key, identity.holdUntilMs);
     if (!won) {
       return {
         paid: false,

@@ -75,7 +75,7 @@ function validPayload(over = {}, authOver = {}) {
         value: CFG.amount,
         validAfter: String(now - 60),
         validBefore: String(now + 600),
-        nonce: "0xnonce",
+        nonce: "0x" + "ab".repeat(32),
         ...authOver,
       },
     },
