@@ -42,6 +42,17 @@ settle SVM. If you are using the hosted default, use an EVM network.
 
 AI agents, scripts, and API clients cannot fill out card checkout forms. x402 lets a server answer `402 Payment Required` with machine-readable payment requirements; the client signs a stablecoin authorization and retries with an `X-PAYMENT` header; the server verifies, settles on-chain, and serves the request. No accounts, no API keys, no subscriptions — pay per call.
 
+### Protocol version: x402 V1
+
+This package speaks **x402 V1**: the payment arrives in the `X-PAYMENT` request
+header, the receipt goes back in `X-PAYMENT-RESPONSE`, payloads carry
+`x402Version: 1`, and networks are plain names (`"base"`, `"solana"`).
+
+x402 V2 (announced June 2026) moves to `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`
+and `PAYMENT-RESPONSE` headers and CAIP-2 network identifiers. **V2 is not
+supported yet.** A client that sends only `PAYMENT-SIGNATURE` receives another
+`402`. The reference x402 SDKs remain V1-compatible, so V1 clients work.
+
 ## Installation
 
 ```bash
