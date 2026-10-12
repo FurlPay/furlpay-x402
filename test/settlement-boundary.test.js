@@ -33,7 +33,7 @@ const HEADER = Buffer.from(
         value: CFG.amount,
         validAfter: String(NOW - 60),
         validBefore: String(NOW + 600),
-        nonce: "0xnonce",
+        nonce: "0x" + "ab".repeat(32),
       },
     },
   })

@@ -54,7 +54,7 @@ function payment(quote, over = {}, authOver = {}) {
         value: "10000",
         validAfter: String(now() - 60),
         validBefore: String(now() + 600),
-        nonce: "0xnonce-" + Math.random().toString(16).slice(2),
+        nonce: "0x" + require("node:crypto").randomBytes(32).toString("hex"),
         ...authOver,
       },
     },
@@ -293,12 +293,13 @@ test("claims expire", () => {
   assert.strictEqual(s.claim("k"), true, "a zero TTL claim is immediately reclaimable");
 });
 
-test("claim keys are network-scoped and quote-scoped", () => {
+test("claim keys are network-scoped and never quote-scoped", () => {
   // The same nonce on two chains is two different payments.
   assert.notStrictEqual(claimKey("base", "0x1"), claimKey("solana", "0x1"));
-  // With a quote, the key follows the SERVER-issued id rather than the
-  // payer-chosen nonce, which the payer could otherwise vary at will.
-  assert.notStrictEqual(claimKey("base", "0x1", "q1"), claimKey("base", "0x1", "q2"));
-  assert.match(claimKey("base", "0x1", "q1"), /^q:/);
-  assert.match(claimKey("base", "0x1"), /^n:/);
+  // This test used to assert the opposite: that a quote id REPLACED the nonce
+  // in the key. Quotes are free and unlimited, so that let one authorization
+  // win one claim per quote. The nonce is the identity whatever the quote.
+  assert.strictEqual(claimKey("base", "0x1", "q1"), claimKey("base", "0x1", "q2"));
+  assert.strictEqual(claimKey("base", "0x1", "q1"), claimKey("base", "0x1"));
+  assert.match(claimKey("base", "0x1", "q1"), /^n:/);
 });

@@ -20,5 +20,7 @@ export { issueQuote, verifyQuote, type QuoteVerification } from "./binding";
 export {
   MemoryClaimStore,
   claimKey,
+  canonicalNonce,
+  type NonceCheck,
   type PaymentClaimStore,
 } from "./claims";

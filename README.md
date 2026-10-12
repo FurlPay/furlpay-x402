@@ -191,8 +191,14 @@ any security sense.
 ### Replay — one payment, one grant
 
 `gate()` claims each payment before settling, so a replayed `X-PAYMENT` header
-is refused rather than releasing the resource again. The release rule is the
-part that matters:
+is refused rather than releasing the resource again. The claim key is the
+network plus the authorization's on-chain nonce, **with or without resource
+binding**: a quote is free with every 402, so it restricts which resource a
+payment unlocks but is never the replay identity. The nonce is validated and
+canonicalized first (EVM: exactly 32 bytes of hex, lowercased; `0xAB…` and
+`ab…` are one nonce), and a payment with a missing or malformed nonce or no
+`validBefore` is refused before settlement. The release rule is the part that
+matters:
 
 | Settlement outcome | Claim |
 | --- | --- |
@@ -207,6 +213,13 @@ two workers. Behind a load balancer each instance keeps its own set and a
 payment replays once per instance — inject a shared store (Redis `SET NX`) via
 `claimStore`, or set `singleUse: false` to leave replay entirely to the
 facilitator.
+
+A claim must outlive the authorization it guards. `gate()` passes
+`holdUntilMs` (the authorization's `validBefore` plus a margin) as the second
+argument to `claim()`; a shared store must keep the key at least that long
+(for Redis, `SET key 1 NX PXAT holdUntilMs`). A store that ignores it and
+expires keys sooner reopens replay for any authorization still inside its
+validity window.
 
 ### What still lives in the facilitator
 
